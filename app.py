@@ -4,8 +4,8 @@ import joblib
 import pandas as pd
 import streamlit as st
 
-CARPETA = 'data/'   # carpeta donde están el modelo y la tabla que guardó el notebook
-UMBRAL = 0.5        # probabilidad a partir de la cual se muestra la alerta
+CARPETA = 'data/'   # carpeta donde están el modelo y la tabla que guardó el notebook (sección 4)
+PISO_DE = 0.5       # desviación mínima de la etiqueta (D-07), igual que en el notebook
 
 # Variables de bienestar: (texto en pantalla, mínimo, máximo, paso del slider)
 ESCALAS = {
@@ -24,11 +24,15 @@ ESCALAS = {
 def cargar():
     paquete = joblib.load(CARPETA + 'modelo_stride_safe.joblib')
     tabla = pd.read_csv(CARPETA + 'tabla_variables.csv', parse_dates=['fecha'])
-    tabla = tabla[tabla['año'] == 2021]   # solo 2021: días que el modelo NO vio al entrenar
-    return paquete['modelo'], paquete['variables'], tabla
+    tabla = tabla[tabla['año'] == 2021].copy()   # solo 2021: días que el modelo NO vio al entrenar
+    # Umbral personal de caída: media de 28 días - max(desviación, 0.5), igual que la etiqueta
+    tabla['limite_caida'] = tabla['media_28'] - tabla['de_28'].clip(lower=PISO_DE)
+    return paquete['modelo'], paquete['calibrador'], paquete['umbral'], paquete['variables'], tabla
 
 
-modelo, VARIABLES, tabla = cargar()
+modelo, calibrador, UMBRAL, VARIABLES, tabla = cargar()
+# El umbral se eligió en 2020 sobre la salida del bosque; aquí lo pasamos a probabilidad calibrada
+UMBRAL_CAL = float(calibrador.predict([UMBRAL])[0])
 
 st.title('STRIDE-SAFE')
 st.caption("Probability that a player's readiness drops tomorrow below her usual level")
@@ -65,27 +69,29 @@ for col in ESCALAS:
     x[col] = respuestas[col]
     x[col + '_dif'] = respuestas[col] - promedio
 
-# Probabilidad de caída mañana (columna 1 = clase positiva)
-prob = modelo.predict_proba(pd.DataFrame([x]))[0, 1]
+# Puntaje del bosque (columna 1 = clase positiva) y su probabilidad calibrada
+puntaje = modelo.predict_proba(pd.DataFrame([x]))[0, 1]
+prob = float(calibrador.predict([puntaje])[0])
 
 # ---------- 4. Resultado ----------
 st.subheader('Result')
 st.metric('Probability of readiness decline tomorrow', f'{prob:.0%}')
-if prob >= UMBRAL:
+if puntaje >= UMBRAL:   # misma decisión que en el notebook (3.8)
     st.error('ALERT: high risk of readiness decline tomorrow. Consider reducing load or scheduling rest.')
 else:
     st.success('No alert: readiness is expected to stay within her usual range.')
-st.caption(f'Alert threshold: {UMBRAL:.0%}')
+st.caption(f'Alert from {UMBRAL_CAL:.0%} (threshold chosen with 2020 data). '
+           f'On average about 15 % of days end in a decline, so 20–30 % is already high risk.')
 
 # Lo que pasó en realidad (solo porque son datos históricos)
-limite = fila['media_28'] - fila['de_28']
+limite = fila['limite_caida']
 st.write(f"**What actually happened:** readiness tomorrow = {fila['readiness_manana']:.0f} "
          f"(her decline threshold = {limite:.1f}) → {'decline' if fila['target'] == 1 else 'no decline'}")
 
 # ---------- 5. Historia de la jugadora ----------
 st.subheader('Readiness history (last 28 reports)')
 historia = datos_j[datos_j['fecha'].dt.date <= fecha].tail(28).set_index('fecha')
-historia['decline threshold'] = historia['media_28'] - historia['de_28']
+historia['decline threshold'] = historia['limite_caida']
 st.line_chart(historia[['readiness', 'decline threshold']])
 
 # ---------- 6. Variables que más pesan en el modelo ----------
