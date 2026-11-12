@@ -21,7 +21,7 @@ ESCALAS = {
 
 # Cargamos el modelo y la tabla una sola vez (cache = no se recargan en cada clic)
 @st.cache_resource
-def cargar():
+def cargar_modelo_final():   # nombre nuevo para que Streamlit no reutilice la caché del modelo anterior
     paquete = joblib.load(CARPETA + 'modelo_stride_safe.joblib')
     tabla = pd.read_csv(CARPETA + 'tabla_variables.csv', parse_dates=['fecha'])
     tabla = tabla[tabla['año'] == 2021].copy()   # solo 2021: días que el modelo NO vio al entrenar
@@ -30,7 +30,7 @@ def cargar():
     return paquete['modelo'], paquete['calibrador'], paquete['umbral'], paquete['variables'], tabla
 
 
-modelo, calibrador, UMBRAL, VARIABLES, tabla = cargar()
+modelo, calibrador, UMBRAL, VARIABLES, tabla = cargar_modelo_final()
 # El umbral se eligió en 2020 sobre la salida del bosque; aquí lo pasamos a probabilidad calibrada
 UMBRAL_CAL = float(calibrador.predict([UMBRAL])[0])
 
